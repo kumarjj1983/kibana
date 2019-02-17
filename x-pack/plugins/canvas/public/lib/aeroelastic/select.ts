@@ -7,13 +7,15 @@
 import {
   ActionId,
   ChangeCallbackFunction,
+  Json,
   Meta,
-  NodeFunction,
-  NodeResult,
   Payload,
+  PlainFun,
+  Selector,
+  State,
   TypeName,
   UpdaterFunction,
-} from './types';
+} from './index';
 
 export const shallowEqual = (a: any, b: any): boolean => {
   if (a === b) {
@@ -32,15 +34,20 @@ export const shallowEqual = (a: any, b: any): boolean => {
 
 const makeUid = (): ActionId => 1e11 + Math.floor((1e12 - 1e11) * Math.random());
 
-export const selectReduce = (fun: NodeFunction, previousValue: NodeResult): NodeFunction => (
-  ...inputs: NodeFunction[]
-): NodeResult => {
+export const select = (fun: PlainFun): Selector => (...fns) => {
+  let { prevId, cache } = { prevId: NaN as ActionId, cache: null as Json };
+  const old = (object: State): boolean => prevId === (prevId = object.primaryUpdate.payload.uid);
+  return obj => (old(obj) ? cache : (cache = fun(...fns.map(f => f(obj) as Json))));
+};
+
+// this function `selectReduce` is in the process of being removed in another PR
+export const selectReduce = (fun: PlainFun, previousValue: Json): Selector => (...inputs) => {
   // last-value memoizing version of this single line function:
   // (fun, previousValue) => (...inputs) => state => previousValue = fun(previousValue, ...inputs.map(input => input(state)))
-  let argumentValues = [] as NodeResult[];
+  let argumentValues = [] as Json[];
   let value = previousValue;
   let prevValue = previousValue;
-  return (state: NodeResult) => {
+  return (state: State) => {
     if (
       shallowEqual(argumentValues, (argumentValues = inputs.map(input => input(state)))) &&
       value === prevValue
@@ -54,32 +61,10 @@ export const selectReduce = (fun: NodeFunction, previousValue: NodeResult): Node
   };
 };
 
-export const select = (fun: NodeFunction): NodeFunction => (
-  ...inputs: NodeFunction[]
-): NodeResult => {
-  // last-value memoizing version of this single line function:
-  // fun => (...inputs) => state => fun(...inputs.map(input => input(state)))
-  let argumentValues = [] as NodeResult[];
-  let value: NodeResult;
-  let actionId: ActionId;
-  return (state: NodeResult) => {
-    const lastActionId: ActionId = state.primaryUpdate.payload.uid;
-    if (
-      actionId === lastActionId ||
-      shallowEqual(argumentValues, (argumentValues = inputs.map(input => input(state))))
-    ) {
-      return value;
-    }
-
-    value = fun(...argumentValues);
-    actionId = lastActionId;
-    return value;
-  };
-};
-
-export const createStore = (initialState: NodeResult, onChangeCallback: ChangeCallbackFunction) => {
+// this function `createStore` is in the process of being removed in another PR
+export const createStore = (initialState: State, onChangeCallback: ChangeCallbackFunction) => {
   let currentState = initialState;
-  let updater: UpdaterFunction = (state: NodeResult): NodeResult => state; // default: no side effect
+  let updater: UpdaterFunction = (state: State): State => state; // default: no side effect
   const getCurrentState = () => currentState;
   // const setCurrentState = newState => (currentState = newState);
   const setUpdater = (updaterFunction: UpdaterFunction) => {
