@@ -17,18 +17,16 @@
  * under the License.
  */
 
-import { EmbeddableState } from '../types';
+import { ErrorEmbeddable } from 'ui/embeddable/embeddables/error_embeddable';
 import { Embeddable } from './embeddable';
 export interface EmbeddableInstanceConfiguration {
   id: string;
 }
 
-export type OnEmbeddableStateChanged = (embeddableStateChanges: EmbeddableState) => void;
-
 /**
  * The EmbeddableFactory creates and initializes an embeddable instance
  */
-export abstract class EmbeddableFactory {
+export abstract class EmbeddableFactory<I, O> {
   public readonly name: string;
 
   /**
@@ -45,12 +43,10 @@ export abstract class EmbeddableFactory {
    * @param {{ id: string }} containerMetadata. Currently just passing in panelState but it's more than we need, so we should
    * decouple this to only include data given to us from the embeddable when it's added to the dashboard. Generally
    * will be just the object id, but could be anything depending on the plugin.
-   * @param {onEmbeddableStateChanged} onEmbeddableStateChanged - embeddable should call this function with updated
-   * state whenever something changes that the dashboard should know about.
    * @return {Promise.<Embeddable>}
    */
   public abstract create(
     containerMetadata: { id: string },
-    onEmbeddableStateChanged: OnEmbeddableStateChanged
-  ): Promise<Embeddable>;
+    initialInput: I
+  ): Promise<Embeddable<I, O> | ErrorEmbeddable>;
 }

@@ -17,17 +17,24 @@
  * under the License.
  */
 
+import { PanelActionAPI } from 'ui/embeddable/context_menu_actions/types';
 import { Action } from './action';
 
 class ActionsRegistry {
-  private actions: { [key: string]: Action<any, any> } = {};
+  private actions: { [key: string]: Action<any, any, any, any> } = {};
 
-  public registerAction(action: Action<any, any>) {
+  public registerAction(action: Action<any, any, any, any>) {
     this.actions[action.id] = action;
   }
 
   public getActionById(id: string) {
     return this.actions[id];
+  }
+
+  public getCompatibleActions(panelAPI: PanelActionAPI<any, any>) {
+    return Object.values(this.actions).filter((action: Action<any, any, any, any>) => {
+      return action.isCompatible(panelAPI);
+    });
   }
 }
 

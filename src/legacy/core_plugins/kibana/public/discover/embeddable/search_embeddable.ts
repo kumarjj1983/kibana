@@ -21,18 +21,16 @@ import angular from 'angular';
 import _ from 'lodash';
 import { SearchSource } from 'ui/courier';
 import * as columnActions from 'ui/doc_table/actions/columns';
-import {
-  ContainerState,
-  Embeddable,
-  EmbeddableState,
-  OnEmbeddableStateChanged,
-  TimeRange,
-} from 'ui/embeddable';
+import { Embeddable, TimeRange, triggerRegistry } from 'ui/embeddable';
+import { FILTER_ACTION } from 'ui/embeddable/actions/trigger_registry';
 import { Filters, Query } from 'ui/embeddable/types';
+import { generateFilters } from 'ui/filter_manager/generate_filter_shape';
+import { StaticIndexPattern } from 'ui/index_patterns';
 import { RequestAdapter } from 'ui/inspector/adapters';
 import { Adapters } from 'ui/inspector/types';
 import { getTime } from 'ui/timefilter/get_time';
 import { SavedSearch } from '../types';
+import { SEARCH_EMBEDDABLE_TYPE } from './search_embeddable_factory';
 import searchTemplate from './search_template.html';
 
 interface SearchScope extends ng.IScope {
@@ -55,19 +53,43 @@ interface SearchEmbeddableCustomization {
 }
 
 interface SearchEmbeddableConfig {
-  onEmbeddableStateChanged: OnEmbeddableStateChanged;
   savedSearch: SavedSearch;
   editUrl: string;
   $rootScope: ng.IRootScopeService;
   $compile: ng.ICompileService;
 }
 
-export class SearchEmbeddable extends Embeddable {
-  private readonly onEmbeddableStateChanged: OnEmbeddableStateChanged;
+interface SearchOverrides {
+  columns: string[];
+  sort?: string[];
+  title: string;
+}
+
+export interface SearchInput {
+  timeRange?: TimeRange;
+  query?: Query;
+  filters?: Filters;
+  hidePanelTitles?: boolean;
+  embeddableCustomization: SearchOverrides;
+}
+
+export interface SearchOutput {
+  title: string;
+  editUrl: string;
+  indexPatterns?: StaticIndexPattern[];
+  stagedFilter?: {
+    field: string;
+    value: string;
+    operator: string;
+    index: string;
+  };
+  customization: SearchEmbeddableCustomization;
+}
+
+export class SearchEmbeddable extends Embeddable<SearchInput, SearchOutput> {
   private readonly savedSearch: SavedSearch;
   private $rootScope: ng.IRootScopeService;
   private $compile: ng.ICompileService;
-  private customization: SearchEmbeddableCustomization;
   private inspectorAdaptors: Adapters;
   private searchScope?: SearchScope;
   private panelTitle: string = '';
@@ -77,23 +99,24 @@ export class SearchEmbeddable extends Embeddable {
   private query?: Query;
   private searchInstance?: JQLite;
 
-  constructor({
-    onEmbeddableStateChanged,
-    savedSearch,
-    editUrl,
-    $rootScope,
-    $compile,
-  }: SearchEmbeddableConfig) {
-    super({
-      title: savedSearch.title,
-      editUrl,
-      indexPatterns: _.compact([savedSearch.searchSource.getField('index')]),
-    });
-    this.onEmbeddableStateChanged = onEmbeddableStateChanged;
+  constructor(
+    { savedSearch, editUrl, $rootScope, $compile }: SearchEmbeddableConfig,
+    initialInput: SearchInput
+  ) {
+    super(
+      { type: SEARCH_EMBEDDABLE_TYPE, id: savedSearch.id },
+      {
+        editUrl,
+        title: savedSearch.title,
+        indexPatterns: _.compact([savedSearch.searchSource.getField('index')]),
+        customization: {},
+      },
+      initialInput
+    );
+
     this.savedSearch = savedSearch;
     this.$rootScope = $rootScope;
     this.$compile = $compile;
-    this.customization = {};
     this.inspectorAdaptors = {
       requests: new RequestAdapter(),
     };
@@ -103,16 +126,17 @@ export class SearchEmbeddable extends Embeddable {
     return this.inspectorAdaptors;
   }
 
-  public onContainerStateChanged(containerState: ContainerState) {
-    this.customization = containerState.embeddableCustomization || {};
-    this.filters = containerState.filters;
-    this.query = containerState.query;
-    this.timeRange = containerState.timeRange;
+  public onInputChanged(input: SearchInput) {
+    this.input = input;
+    this.output.customization = input.embeddableCustomization || {};
+    this.filters = input.filters;
+    this.query = input.query;
+    this.timeRange = input.timeRange;
     this.panelTitle = '';
-    if (!containerState.hidePanelTitles) {
+    if (!input.hidePanelTitles) {
       this.panelTitle =
-        containerState.customTitle !== undefined
-          ? containerState.customTitle
+        input.embeddableCustomization.title !== undefined
+          ? input.embeddableCustomization.title
           : this.savedSearch.title;
     }
 
@@ -126,8 +150,7 @@ export class SearchEmbeddable extends Embeddable {
    * @param {Element} domNode
    * @param {ContainerState} containerState
    */
-  public render(domNode: HTMLElement, containerState: ContainerState) {
-    this.onContainerStateChanged(containerState);
+  public render(domNode: HTMLElement) {
     this.initializeSearchScope();
     if (!this.searchScope) {
       throw new Error('Search scope not defined');
@@ -172,8 +195,8 @@ export class SearchEmbeddable extends Embeddable {
     this.pushContainerStateParamsToScope(searchScope);
 
     searchScope.setSortOrder = (columnName, direction) => {
-      searchScope.sort = this.customization.sort = [columnName, direction];
-      this.emitEmbeddableStateChange(this.getEmbeddableState());
+      searchScope.sort = this.output.customization.sort = [columnName, direction];
+      this.emitOutputChange(this.getOutput());
     };
 
     searchScope.addColumn = (columnName: string) => {
@@ -182,8 +205,8 @@ export class SearchEmbeddable extends Embeddable {
       }
       this.savedSearch.searchSource.getField('index').popularizeField(columnName, 1);
       columnActions.addColumn(searchScope.columns, columnName);
-      searchScope.columns = this.customization.columns = searchScope.columns;
-      this.emitEmbeddableStateChange(this.getEmbeddableState());
+      searchScope.columns = this.output.customization.columns = searchScope.columns;
+      this.emitOutputChange(this.getOutput());
     };
 
     searchScope.removeColumn = (columnName: string) => {
@@ -192,8 +215,8 @@ export class SearchEmbeddable extends Embeddable {
       }
       this.savedSearch.searchSource.getField('index').popularizeField(columnName, 1);
       columnActions.removeColumn(searchScope.columns, columnName);
-      this.customization.columns = searchScope.columns;
-      this.emitEmbeddableStateChange(this.getEmbeddableState());
+      this.output.customization.columns = searchScope.columns;
+      this.emitOutputChange(this.getOutput());
     };
 
     searchScope.moveColumn = (columnName, newIndex: number) => {
@@ -201,8 +224,8 @@ export class SearchEmbeddable extends Embeddable {
         return;
       }
       columnActions.moveColumn(searchScope.columns, columnName, newIndex);
-      this.customization.columns = searchScope.columns;
-      this.emitEmbeddableStateChange(this.getEmbeddableState());
+      this.output.customization.columns = searchScope.columns;
+      this.emitOutputChange(this.getOutput());
     };
 
     searchScope.filter = (field, value, operator) => {
@@ -213,31 +236,31 @@ export class SearchEmbeddable extends Embeddable {
         operator,
         index,
       };
-      this.emitEmbeddableStateChange({
-        ...this.getEmbeddableState(),
-        stagedFilter,
+      const filterActions = triggerRegistry.getTrigger(FILTER_ACTION).getCompatibleActions({
+        embeddable: this,
+        container: this.container,
+      });
+      filterActions[0].execute({
+        embeddable: this,
+        actionInput: generateFilters(stagedFilter),
+        container: this.container,
       });
     };
 
     this.searchScope = searchScope;
   }
 
-  private emitEmbeddableStateChange(embeddableState: EmbeddableState) {
-    this.onEmbeddableStateChanged(embeddableState);
-  }
-
-  private getEmbeddableState(): EmbeddableState {
-    return {
-      customization: this.customization,
-    };
+  private emitOutputChange(output: SearchOutput) {
+    this.output = output;
+    this.emitOutputChanged();
   }
 
   private pushContainerStateParamsToScope(searchScope: SearchScope) {
     // If there is column or sort data on the panel, that means the original columns or sort settings have
     // been overridden in a dashboard.
 
-    searchScope.columns = this.customization.columns || this.savedSearch.columns;
-    searchScope.sort = this.customization.sort || this.savedSearch.sort;
+    searchScope.columns = this.output.customization.columns || this.savedSearch.columns;
+    searchScope.sort = this.output.customization.sort || this.savedSearch.sort;
     searchScope.sharedItemTitle = this.panelTitle;
 
     this.filtersSearchSource.setField('filter', this.filters);

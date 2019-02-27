@@ -17,5 +17,7 @@
  * under the License.
  */
 
-export { Action } from './action';
+export { Action, AnyAction } from './action';
 export { actionRegistry } from './actions_registry';
+export { Trigger } from './trigger';
+export { triggerRegistry } from './trigger_registry';
